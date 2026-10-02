@@ -2,14 +2,34 @@
 // 依赖的全局变量：pc, targetId, localCandidates, gatewayBurstRange, maxGatewayAttempts, carrierNatDetectionEnabled, manualIpFallbackEnabled
 // 依赖的全局函数：addLog, showModal, buildICECandidate
 
-// 运营商NAT检测模式（统一从 assets/carrier-nat-patterns.json 加载）
+// 运营商NAT检测模式（优先从 assets/carrier-nat-patterns.json 加载）
 var carrierNatPatterns = [];           // 编译后的 RegExp 对象数组
 var carrierNatPatternConfigs = [];     // 用户可配置的 { name, regex } 数组
 
-// 初始化检测模式（空启动，后续由 loadCarrierNatPatternsFromJson 从 JSON 文件加载）
+// ⚠️ 内建兜底规则 —— 必须与 assets/carrier-nat-patterns.json 的 patterns 保持一致
+// 为什么需要：直接双击打开 index.html 时页面处于 file:// 协议，fetch 本地文件会被
+// 浏览器以 Origin: null 拦截并抛出 TypeError，导致正则列表空白、运营商NAT检测失效。
+// 本数组保证任何协议下（含离线 file://）NAT 检测开箱可用；http(s) 下仍优先读 JSON。
+var DEFAULT_CARRIER_NAT_PATTERNS = [
+    {
+        name: 'RFC1918 - 10.0.0.0/8',
+        regex: '^10\\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
+    },
+    {
+        name: 'RFC6598 - Carrier-Grade NAT 100.64.0.0/10',
+        regex: '^100\\.(?:6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
+    }
+];
+
+// 初始化检测模式：先用内建规则填充，保证 NAT 检测立即可用（不等 fetch）
 function initCarrierNatPatterns() {
+    if (carrierNatPatternConfigs.length === 0) {
+        carrierNatPatternConfigs = DEFAULT_CARRIER_NAT_PATTERNS.map(function(p) {
+            return { name: p.name, regex: p.regex };
+        });
+    }
     compileCarrierNatPatterns();
-    if (typeof addLog === 'function') addLog('[内网预测] 等待从 carrier-nat-patterns.json 加载规则...');
+    if (typeof addLog === 'function') addLog('[内网预测] 已启用内建规则 ' + carrierNatPatterns.length + ' 条，尝试从 JSON 覆盖...');
 }
 
 // 重新编译检测模式
@@ -32,21 +52,37 @@ function updateCarrierNatPatterns(newConfigs) {
     if (typeof addLog === 'function') addLog('[检测规则] 已更新 ' + carrierNatPatterns.length + ' 条检测规则');
 }
 
-// 从 JSON 文件加载检测模式
+// 从 JSON 文件加载检测模式；失败（file:// / 离线 / CORS）时保留内建兜底规则
 async function loadCarrierNatPatternsFromJson() {
+    var loaded = false;
     try {
         var resp = await fetch('assets/carrier-nat-patterns.json');
-        var data = await resp.json();
-        if (data.patterns && data.patterns.length > 0) {
-            carrierNatPatternConfigs = data.patterns.map(function(p) {
-                return { name: p.name || p.cidr, regex: p.regex };
-            });
-            compileCarrierNatPatterns();
-            if (typeof addLog === 'function') addLog('[检测规则] 从文件加载 ' + carrierNatPatterns.length + ' 条规则');
+        if (resp.ok) {
+            var data = await resp.json();
+            if (data.patterns && data.patterns.length > 0) {
+                carrierNatPatternConfigs = data.patterns.map(function(p) {
+                    return { name: p.name || p.cidr, regex: p.regex };
+                });
+                compileCarrierNatPatterns();
+                loaded = true;
+                if (typeof addLog === 'function') addLog('[检测规则] 从文件加载 ' + carrierNatPatterns.length + ' 条规则');
+            }
         }
     } catch(e) {
-        if (typeof addLog === 'function') addLog('[检测规则] 无法加载 carrier-nat-patterns.json，NAT检测将不可用');
+        // file:// 下 fetch 本地文件会被拦截，静默走兜底
     }
+
+    if (!loaded) {
+        // 保留 initCarrierNatPatterns 填充的内建规则，确保 NAT 检测不失效
+        compileCarrierNatPatterns();
+        var reason = (typeof location !== 'undefined' && location.protocol === 'file:')
+            ? 'file:// 协议禁止读取本地文件'
+            : 'JSON 加载失败';
+        if (typeof addLog === 'function') {
+            addLog('[检测规则] ' + reason + '，使用内建默认规则 ' + carrierNatPatterns.length + ' 条');
+        }
+    }
+    return loaded;
 }
 
 // 初始化默认模式

@@ -200,7 +200,7 @@ main#mainContent {
     background: rgba(4, 20, 45, 0.55);
     border: 1px solid rgba(0, 243, 255, 0.15);
     border-radius: 10px;
-    padding: 4px 4px 4px 14px;
+    padding: 4px;
     transition: 0.3s;
     -webkit-backdrop-filter: blur(4px);
     backdrop-filter: blur(4px);
@@ -267,6 +267,64 @@ main#mainContent {
     color: rgba(0, 243, 255, 0.4);
     letter-spacing: 1.5px;
 }
+
+/* ===== 预选文件按钮（房间号输入框左侧）===== */
+.stage-file-btn {
+    position: relative;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid rgba(0, 243, 255, 0.2);
+    background: rgba(0, 243, 255, 0.06);
+    color: rgba(0, 243, 255, 0.5);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: 0.2s;
+    flex-shrink: 0;
+    padding: 0;
+    line-height: 1;
+}
+.stage-file-btn svg { width: 17px; height: 17px; }
+.stage-file-btn:hover {
+    background: rgba(0, 243, 255, 0.18);
+    border-color: rgba(0, 243, 255, 0.5);
+    color: #00F3FF;
+    box-shadow: 0 0 10px rgba(0, 243, 255, 0.2);
+}
+/* 已暂存文件：高亮 + 光晕呼吸，提示"连接成功即自动上传" */
+.stage-file-btn.has-files {
+    background: rgba(0, 243, 255, 0.18);
+    border-color: rgba(0, 243, 255, 0.55);
+    color: #00F3FF;
+    box-shadow: 0 0 10px rgba(0, 243, 255, 0.25);
+    animation: stagePulse 1.8s ease-in-out infinite;
+}
+@keyframes stagePulse {
+    0%, 100% { box-shadow: 0 0 8px rgba(0, 243, 255, 0.2); }
+    50%      { box-shadow: 0 0 18px rgba(0, 243, 255, 0.5); }
+}
+.stage-file-badge {
+    display: none;
+    position: absolute;
+    top: -7px;
+    right: -7px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    border-radius: 9px;
+    background: #00F3FF;
+    color: #04203c;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+    box-shadow: 0 0 8px rgba(0, 243, 255, 0.6);
+    cursor: pointer;
+    pointer-events: auto;
+}
+.stage-file-btn.has-files .stage-file-badge { display: block; }
 
 /* ===== 雷达中心区域 ===== */
 .radar-center-display {
@@ -514,6 +572,132 @@ main#mainContent {
     font-size: 13px;
     text-align: center;
 }
+
+/* ==================== 消息富文本（render.js 产出） ====================
+   全部限定在 .message 里，不碰页面其他地方。
+   注意两种底色：peer 是浅灰底深字，self 是蓝底白字 ——
+   代码块/表格/链接在这两种底上都得看得清，所以配色分两套写。 */
+
+/* 带图的泡泡放宽到整宽，80% 装不下一张图 */
+.message.has-rich { max-width: 100%; }
+
+.message > :first-child { margin-top: 0; }
+.message > :last-child { margin-bottom: 0; }
+
+.message .md-p { margin: 0 0 8px; }
+.message .md-h {
+    margin: 10px 0 6px;
+    font-weight: 600;
+    line-height: 1.35;
+}
+.message h1.md-h { font-size: 20px; }
+.message h2.md-h { font-size: 18px; }
+.message h3.md-h { font-size: 16px; }
+.message h4.md-h,
+.message h5.md-h,
+.message h6.md-h { font-size: 15px; }
+
+.message .md-list { margin: 6px 0; padding-left: 22px; }
+.message .md-list li { margin: 2px 0; }
+
+.message .md-quote {
+    margin: 6px 0;
+    padding: 2px 0 2px 10px;
+    border-left: 3px solid #c8d2dd;
+    opacity: 0.9;
+}
+
+.message .md-hr {
+    margin: 10px 0;
+    border: none;
+    border-top: 1px solid #dfe5ec;
+}
+
+/* 行内代码 */
+.message .md-code {
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 0.9em;
+}
+.peer-msg .message .md-code {
+    background-color: rgba(0, 0, 0, 0.07);
+    color: #b8336a;
+}
+.self-msg .message .md-code,
+.buffered-msg .message .md-code {
+    background-color: rgba(255, 255, 255, 0.22);
+    color: #ffffff;
+}
+
+/* 围栏代码块 */
+.message .md-pre {
+    margin: 8px 0;
+    padding: 10px 12px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.5;
+}
+.message .md-pre code {
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    white-space: pre;
+}
+.peer-msg .message .md-pre {
+    background-color: #1f2733;
+    color: #e6edf3;
+}
+.self-msg .message .md-pre,
+.buffered-msg .message .md-pre {
+    background-color: rgba(0, 0, 0, 0.28);
+    color: #ffffff;
+}
+
+/* 表格。窄屏要能横向滚，不然会把泡泡撑破 */
+.message .md-table-wrap {
+    margin: 8px 0;
+    overflow-x: auto;
+}
+.message .md-table {
+    border-collapse: collapse;
+    font-size: 14px;
+    width: 100%;
+}
+.message .md-table th,
+.message .md-table td {
+    padding: 5px 10px;
+    text-align: left;
+    white-space: nowrap;
+}
+.message .md-table th { font-weight: 600; }
+.peer-msg .message .md-table th,
+.peer-msg .message .md-table td { border: 1px solid #dfe5ec; }
+.peer-msg .message .md-table th { background-color: rgba(0, 0, 0, 0.05); }
+.self-msg .message .md-table th,
+.self-msg .message .md-table td,
+.buffered-msg .message .md-table th,
+.buffered-msg .message .md-table td { border: 1px solid rgba(255, 255, 255, 0.35); }
+.self-msg .message .md-table th,
+.buffered-msg .message .md-table th { background-color: rgba(255, 255, 255, 0.14); }
+
+/* 链接 */
+.message a { text-decoration: underline; }
+.peer-msg .message a { color: #007bff; }
+.self-msg .message a,
+.buffered-msg .message a { color: #ffffff; }
+
+/* 图表 / 流程图 */
+.message .p2p-chart,
+.message .p2p-mermaid { margin: 8px 0; }
+.message .p2p-chart svg,
+.message .p2p-mermaid svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-width: 100%;
+}
+/* 流程图别拉满整宽，节点少的时候会显得空 */
+.message .p2p-mermaid { max-width: 560px; }
 
 /* 聊天输入区 */
 .chat-input-area {
@@ -1085,8 +1269,10 @@ main#mainContent {
     .big-qr-box canvas { max-width: 200px; max-height: 200px; }
     .room-input-container { top: 16px; }
     .room-input { min-width: 130px; font-size: 14px; }
-    .room-input-row { padding: 3px 3px 3px 10px; gap: 4px; }
+    .room-input-row { padding: 3px; gap: 4px; }
     .room-confirm-btn { width: 30px; height: 30px; font-size: 14px; }
+    .stage-file-btn { width: 30px; height: 30px; }
+    .stage-file-btn svg { width: 16px; height: 16px; }
 
     /* 高级面板输入框移动端可见性 */
     .advanced-panel { padding: 16px; }
@@ -1170,8 +1356,11 @@ main#mainContent {
     .big-qr-box canvas { max-width: 170px; max-height: 170px; }
     .room-input-container { top: 12px; }
     .room-input { min-width: 110px; font-size: 13px; max-width: 160px; }
-    .room-input-row { padding: 2px 2px 2px 8px; gap: 3px; }
+    .room-input-row { padding: 2px; gap: 3px; }
     .room-confirm-btn { width: 28px; height: 28px; font-size: 13px; }
+    .stage-file-btn { width: 28px; height: 28px; }
+    .stage-file-btn svg { width: 15px; height: 15px; }
+    .stage-file-badge { top: -6px; right: -6px; min-width: 16px; height: 16px; line-height: 16px; font-size: 10px; }
 
     /* 高级面板输入框小屏进一步优化 */
     .advanced-panel { padding: 12px; max-height: 70vh; }
@@ -1219,4 +1408,183 @@ main#mainContent {
     aside#sidebar { width: 200px; margin-left: -200px; }
     .floating-menu-btn { top: 10px; left: 10px; padding: 6px; }
     .settings-btn { top: 15px; right: 15px; width: 36px; height: 36px; font-size: 16px; }
+}
+
+/* ===== 对话模式（对端是 AI 时） ===== */
+
+/* 聊天标题栏里的入口按钮。标题栏是浅色的，所以这个按钮跟着浅色走，
+   不跟雷达那边的青色。 */
+.ai-mode-btn {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    font-size: 13px;
+    font-family: inherit;
+    color: #007bff;
+    background: transparent;
+    border: 1px solid #cfd8e3;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: 0.2s;
+    white-space: nowrap;
+}
+.ai-mode-btn:hover { background: #f0f7ff; border-color: #007bff; }
+.ai-mode-btn.ai-mode-active {
+    color: #fff;
+    background: #007bff;
+    border-color: #007bff;
+}
+
+/* 面板：沿用高级设置那套底部抽屉的观感 */
+.ai-panel {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: rgba(4, 11, 26, 0.95);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(0, 243, 255, 0.3);
+    border-radius: 20px 20px 0 0;
+    padding: 20px;
+    z-index: 3000;
+    display: none;
+    max-height: 70vh;
+    overflow-y: auto;
+    color: #00F3FF;
+}
+.ai-panel.show { display: block; }
+.ai-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+}
+.ai-panel-head h3 { font-size: 16px; margin: 0; }
+.ai-panel-head .btn-close { position: static; }
+
+.ai-mode-tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+.ai-mode-tab {
+    flex: 1;
+    padding: 9px 12px;
+    font-size: 14px;
+    font-family: inherit;
+    color: rgba(0, 243, 255, 0.65);
+    background: rgba(0, 243, 255, 0.05);
+    border: 1px solid rgba(0, 243, 255, 0.25);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: 0.2s;
+}
+.ai-mode-tab:hover { background: rgba(0, 243, 255, 0.12); }
+.ai-mode-tab.active {
+    color: #01060e;
+    background: #00F3FF;
+    border-color: #00F3FF;
+    font-weight: 600;
+}
+
+.ai-current {
+    font-size: 13px;
+    color: rgba(0, 243, 255, 0.8);
+    padding: 8px 0 12px;
+    word-break: break-all;
+}
+.ai-hint {
+    font-size: 12px;
+    line-height: 1.6;
+    color: rgba(0, 243, 255, 0.55);
+    margin: 0 0 12px;
+}
+
+.ai-session-list { max-height: 34vh; overflow-y: auto; }
+.ai-session-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    border: 1px solid rgba(0, 243, 255, 0.18);
+    border-radius: 10px;
+    background: rgba(0, 243, 255, 0.04);
+    transition: 0.2s;
+}
+.ai-session-row:hover { border-color: rgba(0, 243, 255, 0.5); background: rgba(0, 243, 255, 0.09); }
+.ai-session-row.is-current { border-color: #00F3FF; background: rgba(0, 243, 255, 0.14); }
+.ai-session-main { flex: 1; min-width: 0; }
+.ai-session-meta {
+    font-size: 12px;
+    color: rgba(0, 243, 255, 0.6);
+    margin-bottom: 4px;
+}
+.ai-session-preview {
+    font-size: 13px;
+    color: #cfefff;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* 内容没展开时只有这一行灰字，不占地方也不泄露任何东西 */
+.ai-session-preview.ai-session-hidden {
+    color: rgba(0, 243, 255, 0.35);
+    font-style: italic;
+}
+.ai-session-peek {
+    align-self: flex-start;
+    margin-top: 6px;
+    padding: 3px 9px;
+    font-size: 12px;
+    font-family: inherit;
+    color: rgba(0, 243, 255, 0.8);
+    background: transparent;
+    border: 1px solid rgba(0, 243, 255, 0.3);
+    border-radius: 6px;
+    cursor: pointer;
+}
+.ai-session-peek:hover:not(:disabled) { background: rgba(0, 243, 255, 0.12); }
+.ai-session-peek:disabled { color: rgba(0, 243, 255, 0.4); cursor: default; }
+.ai-session-pick {
+    flex-shrink: 0;
+    padding: 6px 12px;
+    font-size: 13px;
+    font-family: inherit;
+    color: #01060e;
+    background: #00F3FF;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+}
+.ai-session-pick:disabled {
+    color: rgba(0, 243, 255, 0.5);
+    background: transparent;
+    border: 1px solid rgba(0, 243, 255, 0.3);
+    cursor: default;
+}
+.ai-empty {
+    padding: 20px 0;
+    text-align: center;
+    font-size: 13px;
+    color: rgba(0, 243, 255, 0.5);
+}
+.ai-panel-msg {
+    margin-top: 12px;
+    padding: 9px 12px;
+    font-size: 13px;
+    border-radius: 8px;
+    color: #ffd7a8;
+    background: rgba(255, 176, 32, 0.12);
+    border: 1px solid rgba(255, 176, 32, 0.35);
+}
+
+@media (max-width: 600px) {
+    .ai-panel { padding: 16px; max-height: 78vh; }
+    .ai-session-list { max-height: 40vh; }
+}
+
+@media (max-width: 420px) {
+    /* 窄屏只留图标，标题栏本来就挤 */
+    .ai-mode-label { display: none; }
+    .ai-mode-btn { padding: 6px 8px; }
 }

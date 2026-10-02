@@ -116,6 +116,9 @@ function switchToPeer(peerId) {
     var conn = connections[peerId];
     if (!conn) { addLog('[错误] 切换失败: 连接 ' + peerId + ' 不存在'); return; }
 
+    // 面板是给某一个对端开的，换对端就别让它留在屏幕上误导人
+    if (window._closeAiPanel) window._closeAiPanel();
+
     // 隐藏雷达视图
     var viewRadar = document.getElementById('view-radar');
     if (viewRadar) viewRadar.classList.remove('active-view');
@@ -149,6 +152,9 @@ function _openPeerChat(peerId) {
     addPeerSidebarItem(peerId);
     switchToPeer(peerId);
     openSidebar();
+
+    // 预选文件：连接就绪后立即自动上传（无需用户再操作，规避安卓切后台断连）
+    if (window.flushStagedFiles) window.flushStagedFiles(peerId);
 }
 
 function cleanupConnection(peerId) {
@@ -168,6 +174,8 @@ function cleanupConnection(peerId) {
     if (conn.pc) {
         try { conn.pc.close(); } catch(e) {}
     }
+    // 面板正给这个对端开着的话，连接没了就收起来（否则会停在「正在获取…」）
+    if (window._closeAiPanel) window._closeAiPanel();
     // 移除侧边栏
     removePeerSidebarItem(peerId);
     // 移除聊天界面
