@@ -1,236 +1,147 @@
-/**
- * WebRTC Signaling Server — PartyKit
- *
- * Protocol:
- *   Server → Client  { type: "ok",                  id: string }
- *   Client → Server  { type: "join_room",            payload: { room_id: string } }
- *   Server → Client  { type: "same_network_clients", clients: string[] }
- *   Server → Client  { type: "new_peer",             peer_id: string }
- *   Server → Client  { type: "peer_left",            peer_id: string }
- *   Client ↔ Client  { type: "offer"|"answer"|"ice"|"connect_request"|"connect_accept",
- *                       target: string, payload: unknown }  (relayed by server)
- */
-
 import type * as Party from "partykit/server";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-interface ClientState {
-  shortId: string;
-  roomId: string;
-  connIp: string;
-}
-
-type ForwardableType =
-  | "offer"
-  | "answer"
-  | "ice"
-  | "connect_request"
-  | "connect_accept";
-
-const FORWARDABLE_TYPES = new Set<ForwardableType>([
-  "offer",
-  "answer",
-  "ice",
-  "connect_request",
-  "connect_accept",
-]);
-
-// ── ID Generation ─────────────────────────────────────────────────────────────
-
-const ID_CHARS = "abcdefghjkmnpqrstuvwxyz23456789";
-const ID_LEN = 4;
-const MAX_ID_RETRIES = 64;
-
-function generateShortId(existing: Set<string>): string {
-  for (let attempt = 0; attempt < MAX_ID_RETRIES; attempt++) {
-    let id = "";
-    for (let i = 0; i < ID_LEN; i++) {
-      id += ID_CHARS[Math.floor(Math.random() * ID_CHARS.length)];
-    }
-    if (!existing.has(id)) return id;
-  }
-  // Extremely unlikely; lengthen and retry rather than crash
-  const fallback = `${Date.now().toString(36).slice(-4)}${Math.random()
-    .toString(36)
-    .slice(2, 4)}`;
-  return fallback;
-}
-
-// ── Room Key ──────────────────────────────────────────────────────────────────
-
-function getRoomKey(roomId: string, connIp: string): string {
-  return roomId ? `room:${roomId}` : `ip:${connIp}`;
-}
-
-// ── Server ────────────────────────────────────────────────────────────────────
-
 export default class SignalingServer implements Party.Server {
-  /** connId → client metadata */
-  private readonly clientState = new Map<string, ClientState>();
-  /** shortId → connId (reverse index) */
-  private readonly shortIdToConnId = new Map<string, string>();
+  // 对应 Python 的 self.clients (ConnID -> Connection)
+  // PartyKit 自动维护 room.getConnections()，我们额外维护映射关系
+
+  // 对应 Python 的 self.client_info (ConnID -> {room_id, conn_ip, short_id})
+  clientState = new Map<string, { shortId: string; roomId: string; connIp: string }>();
+
+  // 对应 Python 的 ID 池映射 (ShortID -> ConnID)
+  shortIdToConnId = new Map<string, string>();
 
   constructor(readonly room: Party.Room) {}
 
-  // ── Connection Open ─────────────────────────────────────────────────────────
-
-  onConnect(conn: Party.Connection, ctx: Party.ConnectionContext): void {
-    const connIp =
-      ctx.request.headers.get("cf-connecting-ip") ??
-      ctx.request.headers.get("x-forwarded-for") ??
-      "unknown";
-
-    const shortId = generateShortId(new Set(this.shortIdToConnId.keys()));
-
-    this.clientState.set(conn.id, { shortId, roomId: "", connIp });
-    this.shortIdToConnId.set(shortId, conn.id);
-
-    console.log(`[connect] id=${shortId} ip=${connIp} conn=${conn.id}`);
-    this.send(conn, { type: "ok", id: shortId });
+  // --- 1:1 复刻 Python 的 ID 生成逻辑 ---
+  _generate_new_id(): string {
+    const chars = "abcdefghjkmnpqrstuvwxyz23456789";
+    let id = "";
+    for (let i = 0; i < 4; i++) {
+      id += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    // 检查冲突 (对应 Python 的 available_ids 逻辑简化版)
+    if (this.shortIdToConnId.has(id)) return this._generate_new_id();
+    return id;
   }
 
-  // ── Message Dispatch ────────────────────────────────────────────────────────
+  // --- 1:1 复刻 Python 的 Room Key 逻辑 ---
+  _get_room_key(roomId: string, connIp: string): string {
+    return roomId ? `room:${roomId}` : `ip:${connIp}`;
+  }
 
-  onMessage(raw: string, sender: Party.Connection): void {
-    const state = this.clientState.get(sender.id);
-    if (!state) return;
+  // --- 当 WebSocket 连接建立时 (对应 Python handler 的开始部分) ---
+  async onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
+    const client_id = this._generate_new_id();
+    const conn_ip = ctx.request.headers.get("cf-connecting-ip") || "unknown";
 
-    let data: Record<string, unknown>;
+    // 存储状态
+    this.clientState.set(conn.id, { shortId: client_id, roomId: "", connIp: conn_ip });
+    this.shortIdToConnId.set(client_id, conn.id);
+
+    // 发送初始化成功消息 (对应 Python: {"type": "ok", "id": client_id})
+    conn.send(JSON.stringify({ type: "ok", id: client_id }));
+  }
+
+  // --- 处理接收到的消息 (对应 Python 的 async for message in websocket) ---
+  onMessage(message: string, sender: Party.Connection) {
+    let data;
     try {
-      data = JSON.parse(raw);
+      data = JSON.parse(message);
     } catch {
-      console.warn(`[warn] invalid JSON from ${state.shortId}`);
       return;
     }
 
-    const type = data.type as string | undefined;
+    const senderState = this.clientState.get(sender.id);
+    if (!senderState) return;
 
-    switch (type) {
-      case "join_room":
-        return this.handleJoinRoom(sender, state, data);
+    const client_id = senderState.shortId;
+    const msg_type = data.type;
+    const target_id = data.target; // 注意：这是前端传来的短 ID
+    const payload = data.payload;
 
-      case "offer":
-      case "answer":
-      case "ice":
-      case "connect_request":
-      case "connect_accept":
-        return this.handleForward(sender, state, type, data);
+    // ---- 1. join_room 逻辑 (完全匹配 Python) ----
+    if (msg_type === "join_room") {
+      const room_id = (payload?.room_id || "").toString().trim();
+      senderState.roomId = room_id;
 
-      case "ping":
-        this.send(sender, { type: "pong" });
-        break;
+      const room_key = this._get_room_key(room_id, senderState.connIp);
 
-      case "get_id":
-        this.send(sender, { type: "id", id: state.shortId });
-        break;
+      // 获取同组其他短 ID 列表
+      const same_group_clients: string[] = [];
+      for (const [cid, state] of this.clientState.entries()) {
+        if (cid !== sender.id && this._get_room_key(state.roomId, state.connIp) === room_key) {
+          same_group_clients.push(state.shortId);
+        }
+      }
 
-      default:
-        console.warn(`[warn] unknown message type "${type}" from ${state.shortId}`);
+      // 返回 same_network_clients
+      sender.send(JSON.stringify({
+        type: "same_network_clients",
+        clients: same_group_clients
+      }));
+
+      // 通知同组其他人 new_peer
+      for (const short_id of same_group_clients) {
+        const targetConnId = this.shortIdToConnId.get(short_id);
+        if (targetConnId) {
+          this.room.getConnection(targetConnId)?.send(JSON.stringify({
+            type: "new_peer",
+            peer_id: client_id
+          }));
+        }
+      }
+    }
+
+    // ---- 2. 标准信令转发 (offer, answer, ice, connect_request, connect_accept) ----
+    else if (["offer", "answer", "ice", "connect_request", "connect_accept"].includes(msg_type)) {
+      const targetConnId = target_id ? this.shortIdToConnId.get(target_id) : null;
+      const targetConn = targetConnId ? this.room.getConnection(targetConnId) : null;
+
+      if (targetConn) {
+        const forward_msg: any = {
+          type: msg_type,
+          from: client_id
+        };
+        // Python 逻辑中，除了 connect_accept 都有 payload
+        if (msg_type !== "connect_accept") {
+          forward_msg.payload = payload;
+        }
+
+        targetConn.send(JSON.stringify(forward_msg));
+      } else {
+        sender.send(JSON.stringify({ type: "error", msg: `目标 ${target_id} 不存在` }));
+      }
+    }
+
+    // ---- 3. 其他辅助消息 (ping, get_id) ----
+    else if (msg_type === "ping") {
+      sender.send(JSON.stringify({ type: "pong" }));
+    }
+    else if (msg_type === "get_id") {
+      sender.send(JSON.stringify({ type: "id", id: client_id }));
     }
   }
 
-  // ── Connection Close ────────────────────────────────────────────────────────
-
-  onClose(conn: Party.Connection): void {
+  // --- 断开连接处理 (对应 Python 的 finally 块) ---
+  onClose(conn: Party.Connection) {
     const state = this.clientState.get(conn.id);
-    if (!state) return;
+    if (state) {
+      const client_id = state.shortId;
+      const room_key = this._get_room_key(state.roomId, state.connIp);
 
-    console.log(`[disconnect] id=${state.shortId}`);
-
-    const roomKey = getRoomKey(state.roomId, state.connIp);
-
-    // Notify peers in the same group
-    for (const [cid, otherState] of this.clientState) {
-      if (cid !== conn.id && getRoomKey(otherState.roomId, otherState.connIp) === roomKey) {
-        this.room
-          .getConnection(cid)
-          ?.send(JSON.stringify({ type: "peer_left", peer_id: state.shortId }));
+      // 通知同组其他人 peer_left (对应 Python 的 _remove_from_group 逻辑)
+      for (const [cid, otherState] of this.clientState.entries()) {
+        if (cid !== conn.id && this._get_room_key(otherState.roomId, otherState.connIp) === room_key) {
+          this.room.getConnection(cid)?.send(JSON.stringify({
+            type: "peer_left",
+            peer_id: client_id
+          }));
+        }
       }
+
+      // 清理内存映射 (释放 ID)
+      this.shortIdToConnId.delete(client_id);
+      this.clientState.delete(conn.id);
     }
-
-    // Clean up
-    this.shortIdToConnId.delete(state.shortId);
-    this.clientState.delete(conn.id);
-
-    console.log(`[cleanup] id=${state.shortId} released`);
-  }
-
-  // ── Handlers ────────────────────────────────────────────────────────────────
-
-  private handleJoinRoom(
-    sender: Party.Connection,
-    state: ClientState,
-    data: Record<string, unknown>
-  ): void {
-    const payload = (data.payload ?? {}) as Record<string, unknown>;
-    const roomId = String(payload.room_id ?? "").trim();
-    state.roomId = roomId;
-
-    const roomKey = getRoomKey(roomId, state.connIp);
-    console.log(`[join] id=${state.shortId} key=${roomKey}`);
-
-    // Collect existing peers in the same group (excluding sender)
-    const peers: string[] = [];
-    for (const [cid, otherState] of this.clientState) {
-      if (
-        cid !== sender.id &&
-        getRoomKey(otherState.roomId, otherState.connIp) === roomKey
-      ) {
-        peers.push(otherState.shortId);
-      }
-    }
-
-    // Tell sender who else is already here
-    this.send(sender, { type: "same_network_clients", clients: peers });
-
-    // Tell existing peers about the newcomer
-    for (const peerId of peers) {
-      const targetConnId = this.shortIdToConnId.get(peerId);
-      if (targetConnId) {
-        this.room
-          .getConnection(targetConnId)
-          ?.send(JSON.stringify({ type: "new_peer", peer_id: state.shortId }));
-      }
-    }
-  }
-
-  private handleForward(
-    sender: Party.Connection,
-    state: ClientState,
-    type: ForwardableType,
-    data: Record<string, unknown>
-  ): void {
-    const targetShortId = data.target as string | undefined;
-    if (!targetShortId) {
-      this.send(sender, { type: "error", msg: "Missing target field" });
-      return;
-    }
-
-    const targetConnId = this.shortIdToConnId.get(targetShortId);
-    const targetConn = targetConnId
-      ? this.room.getConnection(targetConnId)
-      : null;
-
-    if (!targetConn) {
-      console.warn(`[warn] target ${targetShortId} not found`);
-      this.send(sender, { type: "error", msg: `Target ${targetShortId} not found` });
-      return;
-    }
-
-    const fwd: Record<string, unknown> = { type, from: state.shortId };
-    // connect_accept carries no payload (matches original behaviour)
-    if (type !== "connect_accept") {
-      fwd.payload = data.payload;
-    }
-
-    targetConn.send(JSON.stringify(fwd));
-    console.log(`[relay] ${type} ${state.shortId} → ${targetShortId}`);
-  }
-
-  // ── Helpers ─────────────────────────────────────────────────────────────────
-
-  private send(conn: Party.Connection, obj: Record<string, unknown>): void {
-    conn.send(JSON.stringify(obj));
   }
 }
